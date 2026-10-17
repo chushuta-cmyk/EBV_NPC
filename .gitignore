@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# R / analysis artifacts
+Rplots.pdf
+.Rhistory
+.RData
+*.rds
+
+# Generated outputs, figures and source data (kept out of the code repository;
+# data are available via GEO / PRIDE or on request)
+output/
+*.xlsx
+*.pdf
+*.png
+*.tiff

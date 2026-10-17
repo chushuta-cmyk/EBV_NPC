@@ -1,322 +1,155 @@
-# -------------------------------------------------------------------------
-# Nature / Lancet Style Cytokine Barplot
-# Minimal publication-ready version
-# -------------------------------------------------------------------------
+# Create a publication-style cytokine bar plot.
 
-library(tidyverse)
-library(ggplot2)
+required <- c("ggplot2", "dplyr", "tidyr", "ragg")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0) stop("Missing R packages: ", paste(missing, collapse = ", "))
 
-# -------------------------------------------------------------------------
-# 1. Read data
-# -------------------------------------------------------------------------
-
-# 读取原始数据
-data_raw <- read.csv("cytokine_replicate.csv", stringsAsFactors = FALSE)
-
-# ==========================================
-# 新增修改：精选 SCI 核心双极化细胞因子
-# ==========================================
-# 定义你需要展示的目标因子（需严格与你的 CSV 列名前缀一致）
-target_cytokines <- c("CXCL10", "CXCL9", "CCL5", "IFN-g", "IL-2", "CXCL8", "CXCL1", "IL-6", "VEGF")
-
-# 提取所有的列名
-all_cols <- colnames(data_raw)
-
-# 第一列是 Condition，必须保留。对于后续列，通过正则去掉 _R1, _R2 后缀，匹配目标因子
-selected_cols <- all_cols[1] # 保留 "Condition" 列
-for (col in all_cols[-1]) {
-  base_name <- sub("_R[0-9]+$", "", col) # 去掉下划线和数字
-  if (base_name %in% target_cytokines) {
-    selected_cols <- c(selected_cols, col)
-  }
-}
-
-# 覆盖原数据集，只保留精选列
-data_raw <- data_raw[, selected_cols, drop = FALSE]
-
-
-# -------------------------------------------------------------------------
-# 2. Extract cytokine names
-# -------------------------------------------------------------------------
-
-col_names <- colnames(data_raw)
-
-cytokine_bases <- unique(
-  sub("_R[0-9]+$", "", col_names)
+file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- dirname(normalizePath(sub("^--file=", "", file_arg[[1]])))
+project_root <- normalizePath(file.path(script_dir, "..", "..", ".."))
+input_file <- Sys.getenv(
+  "CYTOKINE_INPUT",
+  file.path(project_root, "EBV_recoding", "cytokine_replicate.csv")
 )
+output_dir <- Sys.getenv("CYTOKINE_OUTPUT_DIR", file.path(script_dir, "output"))
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-# -------------------------------------------------------------------------
-# 3. Build long-format replicate dataframe
-# -------------------------------------------------------------------------
+data_raw <- suppressWarnings(utils::read.csv(
+  input_file,
+  row.names = 1,
+  check.names = FALSE,
+  fileEncoding = "UTF-8-BOM"
+))
+data_raw[] <- lapply(data_raw, as.numeric)
 
-replicate_list <- list()
-
-for (cyt in cytokine_bases) {
-  
-  rep_cols <- grep(
-    paste0("^", cyt, "_R[0-9]+$"),
-    col_names,
-    value = TRUE
+column_names <- colnames(data_raw)
+cytokines <- unique(sub("_R[0-9]+$", "", column_names))
+rows <- lapply(cytokines, function(cytokine) {
+  columns <- column_names[sub("_R[0-9]+$", "", column_names) == cytokine]
+  values <- data_raw[, columns, drop = FALSE]
+  data.frame(
+    Condition = rep(rownames(values), each = ncol(values)),
+    Cytokine = cytokine,
+    Replicate = rep(seq_len(ncol(values)), times = nrow(values)),
+    Value = as.numeric(t(values)),
+    stringsAsFactors = FALSE
   )
-  
-  if (length(rep_cols) > 0) {
-    
-    for (cond in rownames(data_raw)) {
-      
-      for (i in seq_along(rep_cols)) {
-        
-        replicate_list[[length(replicate_list) + 1]] <- data.frame(
-          Condition = cond,
-          Cytokine = cyt,
-          Replicate = i,
-          Value = data_raw[cond, rep_cols[i]]
-        )
-      }
-    }
-  }
-}
+})
+replicates <- do.call(rbind, rows)
 
-df_replicates <- bind_rows(replicate_list)
-
-# -------------------------------------------------------------------------
-# 4. Summary statistics
-# -------------------------------------------------------------------------
-
-df_summary <- df_replicates %>%
-  group_by(Condition, Cytokine) %>%
-  summarise(
+summary_data <- replicates |>
+  dplyr::group_by(Condition, Cytokine) |>
+  dplyr::summarise(
     Mean = mean(Value, na.rm = TRUE),
-    SD   = sd(Value, na.rm = TRUE),
+    SD = stats::sd(Value, na.rm = TRUE),
     .groups = "drop"
   )
 
-# -------------------------------------------------------------------------
-# 5. Select Top 8 cytokines by TPA / UT fold-change
-# -------------------------------------------------------------------------
+fold_change <- summary_data |>
+  dplyr::select(Condition, Cytokine, Mean) |>
+  tidyr::pivot_wider(names_from = Condition, values_from = Mean)
+if (!all(c("TPA", "UT") %in% names(fold_change))) {
+  stop("The cytokine data need TPA and UT rows.")
+}
+fold_change$TPA_to_UT <- fold_change$TPA / fold_change$UT
+fold_change <- fold_change[order(fold_change$TPA_to_UT, decreasing = TRUE), ]
+top_cytokines <- head(fold_change$Cytokine, 8)
 
-fc_table <- df_summary %>%
-  pivot_wider(
-    id_cols = Cytokine,
-    names_from = Condition,
-    values_from = Mean
-  ) %>%
-  mutate(
-    FC_TPA_vs_UT = TPA / UT
-  ) %>%
-  arrange(desc(FC_TPA_vs_UT))
+plot_data <- summary_data[summary_data$Cytokine %in% top_cytokines, ]
+plot_data$Cytokine <- factor(plot_data$Cytokine, levels = top_cytokines)
+point_data <- replicates[replicates$Cytokine %in% top_cytokines, ]
+point_data$Cytokine <- factor(point_data$Cytokine, levels = top_cytokines)
 
-top_cytokines <- fc_table$Cytokine[1:min(8, nrow(fc_table))]
-
-# -------------------------------------------------------------------------
-# 6. Filter plotting data
-# -------------------------------------------------------------------------
-
-df_plot <- df_summary %>%
-  filter(Cytokine %in% top_cytokines) %>%
-  mutate(
-    Cytokine = factor(Cytokine, levels = top_cytokines)
+condition_colors <- c(
+  UT = "#6AAED6",
+  DMSO = "#B3B3B3",
+  TPA = "#F28E00",
+  MOCK = "#2C7FB8",
+  Zta = "#18A87D"
+)
+unknown <- setdiff(unique(plot_data$Condition), names(condition_colors))
+if (length(unknown) > 0) {
+  condition_colors <- c(
+    condition_colors,
+    stats::setNames(grDevices::hcl.colors(length(unknown), "Dark 3"), unknown)
   )
+}
 
-df_replicates_plot <- df_replicates %>%
-  filter(Cytokine %in% top_cytokines) %>%
-  mutate(
-    Cytokine = factor(Cytokine, levels = top_cytokines)
-  )
-
-# -------------------------------------------------------------------------
-# Publication-style cytokine plot
-# -------------------------------------------------------------------------
-
-p <- ggplot(
-  df_plot,
-  aes(x = Condition, y = Mean, fill = Condition)
+plot <- ggplot2::ggplot(
+  plot_data,
+  ggplot2::aes(Condition, Mean, fill = Condition)
 ) +
-  
-  # bars
-  geom_col(
-    width = 0.66,
-    colour = "black",
-    linewidth = 0.4,
-    alpha = 0.95
+  ggplot2::geom_col(width = 0.66, color = "black", linewidth = 0.4) +
+  ggplot2::geom_errorbar(
+    ggplot2::aes(ymin = pmax(0, Mean - SD), ymax = Mean + SD),
+    width = 0.2,
+    linewidth = 0.6
   ) +
-  
-  # error bars
-  geom_errorbar(
-    aes(
-      ymin = Mean - SD,
-      ymax = Mean + SD
-    ),
-    width = 0.22,
-    linewidth = 0.7,
-    colour = "black"
+  ggplot2::geom_point(
+    data = point_data,
+    ggplot2::aes(Condition, Value),
+    inherit.aes = FALSE,
+    position = ggplot2::position_jitter(width = 0.08),
+    size = 1.3,
+    shape = 21,
+    fill = "white"
   ) +
-  
-  # facet panels
-  facet_wrap(
-    ~ Cytokine,
+  ggplot2::facet_wrap(
+    ~Cytokine,
     scales = "free_y",
-    ncol = 4
+    ncol = 4,
+    labeller = ggplot2::labeller(Cytokine = function(x) {
+      x <- gsub("α", "-alpha", x, fixed = TRUE)
+      x <- gsub("β", "-beta", x, fixed = TRUE)
+      gsub("γ", "-gamma", x, fixed = TRUE)
+    })
   ) +
-  
-  # softer publication colors
-  scale_fill_manual(
-    values = c(
-      "UT"   = "#6AAED6",
-      "DMSO" = "#B3B3B3",
-      "TPA"  = "#F28E00",
-      "MOCK" = "#2C7FB8",
-      "Zta"  = "#18A87D"
-    )
-  ) +
-  
-  # slightly expand y-axis for better SD visibility
-  scale_y_continuous(
-    expand = expansion(mult = c(0, 0.06))
-  ) +
-  
-  # labels
-  labs(
-    title = "Top Cytokines Responding to TPA Treatment",
-    subtitle = "Mean ± SD (n = 3). TPA shown in orange",
+  ggplot2::scale_fill_manual(values = condition_colors) +
+  ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.08))) +
+  ggplot2::labs(
+    title = "Top cytokines responding to TPA treatment",
+    subtitle = "Mean and SD with replicate values",
     x = NULL,
     y = "Concentration (pg/mL)"
   ) +
-  
-  # base theme
-  theme_bw(base_size = 11) +
-  
-  theme(
-    
-    # light grey panel background
-    panel.background = element_rect(
-      fill = "#F7F7F7",
-      colour = NA
-    ),
-    
-    # grids
-    panel.grid.major = element_line(
-      colour = "#D9D9D9",
-      linewidth = 0.45
-    ),
-    
-    panel.grid.minor = element_line(
-      colour = "#EEEEEE",
-      linewidth = 0.28
-    ),
-    
-    # panel border
-    panel.border = element_rect(
-      colour = "black",
-      fill = NA,
-      linewidth = 0.45
-    ),
-    
-    # facet strips
-    strip.background = element_rect(
-      fill = "#E6E6E6",
-      colour = "black",
-      linewidth = 0.45
-    ),
-    
-    strip.text = element_text(
-      face = "bold",
-      size = 10,
-      colour = "black"
-    ),
-    
-    # title
-    plot.title = element_text(
-      face = "bold",
-      size = 18,
-      hjust = 0.5
-    ),
-    
-    # subtitle
-    plot.subtitle = element_text(
-      size = 11,
-      face = "italic",
-      hjust = 0.5,
-      margin = margin(b = 10)
-    ),
-    
-    # x-axis text
-    axis.text.x = element_text(
-      angle = 45,
-      hjust = 1,
-      vjust = 1,
-      size = 9,
-      colour = "black"
-    ),
-    
-    # y-axis text
-    axis.text.y = element_text(
-      size = 9,
-      colour = "black"
-    ),
-    
-    # axis title
-    axis.title.y = element_text(
-      size = 13,
-      face = "bold"
-    ),
-    
-    # axis lines
-    axis.line = element_line(
-      colour = "black",
-      linewidth = 0.4
-    ),
-    
-    # ticks
-    axis.ticks = element_line(
-      colour = "black",
-      linewidth = 0.4
-    ),
-    
-    # spacing
-    panel.spacing = unit(0.6, "lines"),
-    
-    # remove legend
-    legend.position = "none",
-    
-    # margins
-    plot.margin = margin(
-      t = 10,
-      r = 10,
-      b = 10,
-      l = 10
-    )
+  ggplot2::theme_bw(base_size = 11) +
+  ggplot2::theme(
+    panel.background = ggplot2::element_rect(fill = "#F7F7F7", color = NA),
+    panel.grid.minor = ggplot2::element_blank(),
+    strip.background = ggplot2::element_rect(fill = "#E6E6E6", color = "black"),
+    strip.text = ggplot2::element_text(face = "bold"),
+    plot.title = ggplot2::element_text(face = "bold", size = 17, hjust = 0.5),
+    plot.subtitle = ggplot2::element_text(face = "italic", hjust = 0.5),
+    axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, color = "black"),
+    legend.position = "none"
   )
 
-# show plot
-print(p)
-# -------------------------------------------------------------------------
-# 10. Save
-# -------------------------------------------------------------------------
-
-ggsave(
-  "Nature_style_cytokine_barplot.pdf",
-  p,
+ggplot2::ggsave(
+  file.path(output_dir, "Nature_style_cytokine_barplot.pdf"),
+  plot,
   width = 8.5,
   height = 5.8,
   useDingbats = FALSE
 )
-
-ggsave(
-  "Nature_style_cytokine_barplot.tiff",
-  p,
+ggplot2::ggsave(
+  file.path(output_dir, "Nature_style_cytokine_barplot.tiff"),
+  plot,
   width = 8.5,
   height = 5.8,
   dpi = 600,
-  compression = "lzw"
+  compression = "lzw",
+  device = ragg::agg_tiff
 )
-
-# -------------------------------------------------------------------------
-# 11. Output selected cytokines
-# -------------------------------------------------------------------------
-
-cat("\nTop cytokines by TPA/UT fold-change:\n")
-
-print(
-  fc_table[1:8, c("Cytokine", "FC_TPA_vs_UT")]
+ggplot2::ggsave(
+  file.path(output_dir, "Nature_style_cytokine_barplot.png"),
+  plot,
+  width = 8.5,
+  height = 5.8,
+  dpi = 300
 )
-
+utils::write.csv(
+  fold_change,
+  file.path(output_dir, "cytokine_TPA_to_UT_fold_change.csv"),
+  row.names = FALSE
+)
+cat("Output:", output_dir, "\n")

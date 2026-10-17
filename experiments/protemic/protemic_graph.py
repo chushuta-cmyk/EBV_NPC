@@ -1,7 +1,32 @@
+"""Create publication figures from the proteomics result table."""
+
+import argparse
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+
+project_root = Path(__file__).resolve().parents[3]
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--input",
+    type=Path,
+    default=project_root / "EBV_recoding" / "1.5倍-Diff_ResultSummary.xlsx",
+)
+parser.add_argument(
+    "--output-dir",
+    type=Path,
+    default=Path(__file__).resolve().parent / "output",
+)
+args = parser.parse_args()
+args.output_dir.mkdir(parents=True, exist_ok=True)
 
 # Journal styling setup
 sns.set_theme(style="ticks")
@@ -9,7 +34,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'DejaVu Sans']
 
 # 1. Load background full proteomics data and extract metrics
-full_df = pd.read_excel('1.5倍-Diff_ResultSummary.xlsx')  # Use read_excel for .xlsx files
+full_df = pd.read_excel(args.input)
 full_df.columns = full_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
 
 ratio_col = 'NPC43-Re/NPC43-Ctl'
@@ -55,8 +80,8 @@ for bar in bars:
 
 ax.set_xlim(barplot_data['log2FC'].min() - 0.6, barplot_data['log2FC'].max() + 0.6)
 plt.tight_layout()
-plt.savefig('Bidirectional_Diverging_Barplot.pdf', bbox_inches='tight')
-plt.savefig('Bidirectional_Diverging_Barplot.png', bbox_inches='tight', dpi=300)  # 可选：同时保留栅格版
+plt.savefig(args.output_dir / 'Bidirectional_Diverging_Barplot.pdf', bbox_inches='tight')
+plt.savefig(args.output_dir / 'Bidirectional_Diverging_Barplot.png', bbox_inches='tight', dpi=300)
 plt.close()
 
 # -------------------------------------------------------------------------
@@ -98,6 +123,9 @@ sns.despine()
 ax.grid(linestyle=':', alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('Targeted_Volcano_Plot.pdf', bbox_inches='tight')
-plt.savefig('Targeted_Volcano_Plot.png', bbox_inches='tight', dpi=300)
+plt.savefig(args.output_dir / 'Targeted_Volcano_Plot.pdf', bbox_inches='tight')
+plt.savefig(args.output_dir / 'Targeted_Volcano_Plot.png', bbox_inches='tight', dpi=300)
 plt.close()
+
+barplot_data.to_csv(args.output_dir / 'Biphasic_Hub_Proteins.csv', index=False)
+print(f"Output: {args.output_dir}")

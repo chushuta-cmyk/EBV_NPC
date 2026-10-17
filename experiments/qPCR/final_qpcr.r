@@ -21,12 +21,11 @@ pA <- ggplot(bzlf1, aes(x = Group, y = RQ, fill = Group)) +
   scale_fill_manual(values = c("grey70", "#E41A1C", "grey70", "#E41A1C")) +
   scale_y_log10(breaks = c(0.2, 0.5, 1, 2, 5, 10, 20),
                 labels = c("0.2", "0.5", "1", "2", "5", "10", "20")) +
-  labs(y = "BZLF1 RQ (log scale)", subtitle = "A") +
+  labs(y = "BZLF1 RQ (log scale)") +
   theme_classic(base_size = 14) +
   theme(legend.position = "none",
         axis.title.x = element_blank(),
-        axis.text.x = element_text(face = "bold"),
-        plot.subtitle = element_text(face = "bold", size = 16))
+        axis.text.x = element_text(face = "bold"))
 
 # --------------------------------------------
 # 2. Panel B: Mono-culture IL1A + CXCL8 (with CI)
@@ -51,13 +50,12 @@ pB <- ggplot(mono_data, aes(x = Condition, y = RQ, fill = Condition)) +
   scale_fill_manual(values = c("DMSO" = "grey70", "TPA" = "#377EB8")) +
   facet_wrap(~ Gene, scales = "free_y") +
   coord_cartesian(ylim = c(0, 3.5)) +   # gives headroom for error bars
-  labs(y = "RQ", subtitle = "B") +
+  labs(y = "RQ") +
   theme_classic(base_size = 14) +
   theme(legend.position = "none",
         axis.title.x = element_blank(),
         strip.background = element_blank(),
-        strip.text = element_text(face = "bold", size = 13),
-        plot.subtitle = element_text(face = "bold", size = 16))
+        strip.text = element_text(face = "bold", size = 13))
 
 # --------------------------------------------
 # 3. Panel C: Co-culture paired scatter (REAL data)
@@ -85,12 +83,11 @@ pC <- ggplot(co_data, aes(x = Condition, y = RQ,
   geom_point(size = 4) +
   scale_color_manual(values = c("Donor 1" = "#1B9E77", "Donor 2" = "#D95F02")) +
   facet_wrap(~ Gene, scales = "free_y") +
-  labs(y = "RQ", subtitle = "C", color = "PBMC donor") +
+  labs(y = "RQ", color = "PBMC donor") +
   theme_classic(base_size = 14) +
   theme(legend.position = "bottom",
         strip.background = element_blank(),
-        strip.text = element_text(face = "bold", size = 13),
-        plot.subtitle = element_text(face = "bold", size = 16))
+        strip.text = element_text(face = "bold", size = 13))
 
 # --------------------------------------------
 # 4. Combine all three panels
