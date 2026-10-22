@@ -125,6 +125,10 @@ run_wgcna_module <- function(state, config) {
     p_value = module_p[, 1],
     row.names = NULL
   )
+  trait_table$adjusted_p_value <- stats::p.adjust(
+    trait_table$p_value,
+    method = "BH"
+  )
   save_table(module_table, file.path(config$tables_dir, "wgcna_modules.csv"))
   save_table(trait_table, file.path(config$tables_dir, "wgcna_module_trait.csv"))
 

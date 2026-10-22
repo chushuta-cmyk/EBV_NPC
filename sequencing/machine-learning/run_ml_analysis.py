@@ -35,19 +35,22 @@ LOW_CP = {"GSM7024418", "GSM7024402", "GSM7024424", "GSM7024411", "GSM7024416"}
 
 
 def parse_args() -> argparse.Namespace:
-    project_root = Path(__file__).resolve().parents[3]
-    data_dir = project_root / "EBV_recoding"
+    pipeline_dir = Path(__file__).resolve().parents[1]
+    data_dir = pipeline_dir / "output" / "tables"
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cibersort", type=Path, default=data_dir / "CIBERSORT_Results_Filtered.csv")
-    parser.add_argument("--genes", type=Path, default=data_dir / "Hub_Genes_Expression.csv")
+    parser.add_argument("--cibersort", type=Path, default=data_dir / "cibersort_results.csv")
+    parser.add_argument("--genes", type=Path, default=data_dir / "hub_gene_expression.csv")
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "output")
+    parser.add_argument("--jobs", type=int, default=1)
     return parser.parse_args()
 
 
 def load_data(path: Path) -> tuple[pd.DataFrame, np.ndarray, pd.DataFrame]:
     data = pd.read_csv(path)
     first_column = data.columns[0]
-    if not first_column or first_column.startswith("Unnamed"):
+    if "Sample_ID" not in data.columns and "sample" in data.columns:
+        data = data.rename(columns={"sample": "Sample_ID"})
+    elif not first_column or first_column.startswith("Unnamed"):
         data = data.rename(columns={first_column: "Sample_ID"})
     if "Sample_ID" not in data.columns:
         raise ValueError("The CIBERSORT file needs a Sample_ID column.")
@@ -63,12 +66,16 @@ def load_data(path: Path) -> tuple[pd.DataFrame, np.ndarray, pd.DataFrame]:
     if features.isna().any().any():
         bad = features.columns[features.isna().any()].tolist()
         raise ValueError(f"Non-numeric immune features: {', '.join(bad)}")
+    constant = features.columns[features.nunique(dropna=False) <= 1]
+    features = features.drop(columns=constant)
+    if features.shape[1] < 2:
+        raise ValueError("At least two variable immune features are required.")
     if len(np.unique(y)) != 2:
         raise ValueError("Both High_CP and Low_CP samples are required.")
     return features, y, clean
 
 
-def model_set() -> dict[str, object]:
+def model_set(jobs: int) -> dict[str, object]:
     def scaled(model: object) -> Pipeline:
         return Pipeline([("scale", StandardScaler()), ("model", model)])
 
@@ -86,28 +93,34 @@ def model_set() -> dict[str, object]:
         )),
         "Extra Trees": ExtraTreesClassifier(
             n_estimators=500, max_depth=2, min_samples_leaf=2,
-            class_weight="balanced", random_state=42, n_jobs=-1
+            class_weight="balanced", random_state=42, n_jobs=jobs
         ),
         "Random Forest": RandomForestClassifier(
             n_estimators=500, max_depth=2, min_samples_leaf=2,
-            class_weight="balanced", random_state=42, n_jobs=-1
+            class_weight="balanced", random_state=42, n_jobs=jobs
         ),
         "Naive Bayes": scaled(GaussianNB()),
     }
 
 
-def prediction_scores(model: object, features: pd.DataFrame, y: np.ndarray, cv: LeaveOneOut) -> np.ndarray:
+def prediction_scores(
+    model: object,
+    features: pd.DataFrame,
+    y: np.ndarray,
+    cv: LeaveOneOut,
+    jobs: int,
+) -> np.ndarray:
     if hasattr(model, "predict_proba"):
-        return cross_val_predict(model, features, y, cv=cv, method="predict_proba", n_jobs=-1)[:, 1]
-    return cross_val_predict(model, features, y, cv=cv, method="decision_function", n_jobs=-1)
+        return cross_val_predict(model, features, y, cv=cv, method="predict_proba", n_jobs=jobs)[:, 1]
+    return cross_val_predict(model, features, y, cv=cv, method="decision_function", n_jobs=jobs)
 
 
-def benchmark(features: pd.DataFrame, y: np.ndarray) -> pd.DataFrame:
+def benchmark(features: pd.DataFrame, y: np.ndarray, jobs: int) -> pd.DataFrame:
     cv = LeaveOneOut()
     rows = []
-    for name, model in model_set().items():
-        predictions = cross_val_predict(model, features, y, cv=cv, method="predict", n_jobs=-1)
-        scores = prediction_scores(model, features, y, cv)
+    for name, model in model_set(jobs).items():
+        predictions = cross_val_predict(model, features, y, cv=cv, method="predict", n_jobs=jobs)
+        scores = prediction_scores(model, features, y, cv, jobs)
         matrix = confusion_matrix(y, predictions, labels=[0, 1])
         rows.append({
             "Model": name,
@@ -142,8 +155,8 @@ def plot_performance(performance: pd.DataFrame, output_dir: Path) -> None:
     plt.close(figure)
 
 
-def fit_lasso(features: pd.DataFrame, y: np.ndarray) -> pd.DataFrame:
-    model = clone(model_set()["LASSO"])
+def fit_lasso(features: pd.DataFrame, y: np.ndarray, jobs: int) -> pd.DataFrame:
+    model = clone(model_set(jobs)["LASSO"])
     model.fit(features, y)
     weights = model.named_steps["model"].coef_[0]
     ranking = pd.DataFrame({"Feature": features.columns, "Weight": weights})
@@ -169,6 +182,8 @@ def gene_immune_analysis(
     output_dir: Path,
 ) -> None:
     genes = pd.read_csv(gene_path)
+    if "Sample_ID" not in genes.columns and "sample" in genes.columns:
+        genes = genes.rename(columns={"sample": "Sample_ID"})
     if "Sample_ID" not in genes.columns:
         raise ValueError("The gene file needs a Sample_ID column.")
     merged = immune_data[["Sample_ID"] + features.columns.tolist()].merge(genes, on="Sample_ID")
@@ -213,17 +228,51 @@ def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     features, y, immune_data = load_data(args.cibersort)
-    performance = benchmark(features, y)
+    performance = benchmark(features, y, args.jobs)
     performance.to_csv(args.output_dir / "ML_Model_Performance.csv", index=False)
     plot_performance(performance, args.output_dir)
 
-    lasso_ranking = fit_lasso(features, y)
+    lasso_ranking = fit_lasso(features, y, args.jobs)
     lasso_ranking.to_csv(args.output_dir / "LASSO_Feature_Ranking.csv", index=False)
     gene_immune_analysis(immune_data, features, args.genes, args.output_dir)
+
+    input_audit = pd.DataFrame({
+        "Metric": ["Samples", "Low_CP", "High_CP", "Immune features", "Validation"],
+        "Value": [len(y), int((y == 0).sum()), int((y == 1).sum()), features.shape[1], "Leave-one-out"],
+    })
+    input_audit.to_csv(args.output_dir / "ML_Input_Audit.csv", index=False)
+
+    figure_files = [
+        args.output_dir / "ML_Model_Comparison.png",
+        args.output_dir / "Gene_Immune_Correlation_Heatmap.png",
+    ]
+    validation = pd.DataFrame({
+        "Check": [
+            "Seven models completed",
+            "All model metrics are finite",
+            "All 22 samples were used",
+            "Both groups were included",
+            "Output figures are not empty",
+        ],
+        "Passed": [
+            len(performance) == 7,
+            np.isfinite(
+                performance[["LOO_Accuracy", "LOO_Balanced_Accuracy", "LOO_ROC_AUC"]]
+                .to_numpy(dtype=float)
+            ).all(),
+            len(y) == 22,
+            set(np.unique(y)) == {0, 1},
+            all(path.exists() and path.stat().st_size > 0 for path in figure_files),
+        ],
+    })
+    validation.to_csv(args.output_dir / "Python_ML_Validation.csv", index=False)
+    if not validation["Passed"].all():
+        raise RuntimeError("One or more Python machine-learning checks failed.")
 
     class_counts = pd.Series(y).value_counts().sort_index()
     print(f"Samples: {len(y)} (Low_CP={class_counts.get(0, 0)}, High_CP={class_counts.get(1, 0)})")
     print(performance.to_string(index=False))
+    print("All Python machine-learning checks passed.")
     print(f"Output: {args.output_dir}")
 
 

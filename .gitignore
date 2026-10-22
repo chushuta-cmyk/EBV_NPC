@@ -18,3 +18,8 @@ output/
 *.pdf
 *.png
 *.tiff
+
+# Analysis result tables and run logs kept as local copies only
+*.log
+sequencing/single-cell/downstream_v3/results/
+sequencing/figure_redraw/source_data/

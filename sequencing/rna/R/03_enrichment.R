@@ -24,6 +24,12 @@ run_enrichment_module <- function(state, config) {
     unique(mapped$ENTREZID)
   }
 
+  # Use tested panel genes as the enrichment background.
+  background_ids <- convert_ids(de_table$gene)
+  if (length(background_ids) == 0) {
+    stop("No background genes could be mapped to ENTREZ IDs.", call. = FALSE)
+  }
+
   plot_enrichment <- function(table, title, path) {
     if (nrow(table) == 0) return(invisible(NULL))
     shown <- head(table[order(table$p.adjust, -table$Count), ], 15)
@@ -52,6 +58,7 @@ run_enrichment_module <- function(state, config) {
       OrgDb = org.Hs.eg.db::org.Hs.eg.db,
       keyType = "ENTREZID",
       ont = "ALL",
+      universe = background_ids,
       pAdjustMethod = "BH",
       pvalueCutoff = 0.05,
       qvalueCutoff = 0.05,
@@ -62,6 +69,7 @@ run_enrichment_module <- function(state, config) {
     kegg_table <- tryCatch({
       as.data.frame(clusterProfiler::enrichKEGG(
         gene = ids,
+        universe = background_ids,
         organism = "hsa",
         pAdjustMethod = "BH",
         pvalueCutoff = 0.05,

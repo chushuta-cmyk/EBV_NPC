@@ -15,6 +15,16 @@ find_project_dir <- function() {
 project_dir <- find_project_dir()
 source(file.path(project_dir, "R", "00_setup.R"))
 
+# Use packages stored with this analysis.
+local_library <- file.path(project_dir, "R_library")
+if (dir.exists(local_library)) {
+  .libPaths(c(local_library, .libPaths()))
+}
+external_library <- Sys.getenv("RNA_EXTERNAL_LIBRARY", unset = "")
+if (nzchar(external_library) && dir.exists(external_library)) {
+  .libPaths(unique(c(.libPaths()[1], external_library, .libPaths()[-1])))
+}
+
 module_files <- c(
   data = "01_data.R",
   figures = "02_figures.R",
@@ -68,7 +78,10 @@ if ("--help" %in% arguments) {
     "Usage: Rscript run_analysis.R [--modules=core|all|name,name] [--dry-run]\n",
     "\n",
     "Environment variables:\n",
-    "  RNA_COUNTS_FILE                 Local GSE224450 count matrix\n",
+    "  RNA_RCC_TAR_FILE                GSE224450 raw RCC archive\n",
+    "  RNA_INPUT_DIR                   Directory containing analysis inputs\n",
+    "  RNA_EXTERNAL_LIBRARY            Existing external R package library\n",
+    "  RNA_CIBERSORT_PERM              CIBERSORT permutations, default 1000\n",
     "  RNA_CIBERSORT_FILE              Local CIBERSORT result table\n",
     "  RNA_SURVIVAL_PHENOTYPE_FILE     Local GSE102349 metadata JSON\n",
     "  RNA_SURVIVAL_EXPRESSION_FILE    Local GSE102349 expression matrix\n",
@@ -84,7 +97,7 @@ if ("--list-modules" %in% arguments) {
 
 module_argument <- grep("^--modules=", arguments, value = TRUE)
 selection <- if (length(module_argument) == 0) {
-  "core"
+  Sys.getenv("RNA_MODULES", unset = "core")
 } else {
   sub("^--modules=", "", module_argument[[1]])
 }
@@ -107,15 +120,12 @@ package_requirements <- list(
   enrichment = c("clusterProfiler", "org.Hs.eg.db", "ggplot2"),
   immune = c("ggplot2", "tidyr", "pheatmap", "RColorBrewer"),
   hub = c("ggplot2", "pheatmap", "randomForest"),
-  ml = c("caret", "pROC", "randomForest", "xgboost", "glmnet", "kernlab", "ggplot2"),
+  ml = c("caret", "pROC", "randomForest", "glmnet", "ggplot2"),
   wgcna = "WGCNA",
   pathways = c("ggplot2", "pheatmap", "org.Hs.eg.db", "AnnotationDbi"),
   survival = "survival"
 )
 packages <- unique(unlist(package_requirements[selected_modules], use.names = FALSE))
-if ("data" %in% selected_modules && !nzchar(Sys.getenv("RNA_COUNTS_FILE", unset = ""))) {
-  packages <- c(packages, "GEOquery")
-}
 if ("immune" %in% selected_modules && !nzchar(Sys.getenv("RNA_CIBERSORT_FILE", unset = ""))) {
   packages <- c(packages, "CIBERSORT")
 }
@@ -145,4 +155,12 @@ for (module in selected_modules) {
 }
 
 saveRDS(state, file.path(config$cache_dir, "pipeline_state.rds"))
+save_table(
+  data.frame(module = selected_modules, status = "complete"),
+  file.path(config$tables_dir, "module_run_status.csv")
+)
+capture.output(
+  sessionInfo(),
+  file = file.path(config$output_dir, "session_info.txt")
+)
 cat("Pipeline complete. Output:", config$output_dir, "\n")

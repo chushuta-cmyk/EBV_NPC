@@ -21,19 +21,28 @@ All findings are exploratory and were derived from secondary analyses of publicl
 experiments/
   cytokines/           Luminex 18-plex cytokine analyses (NPC43 monoculture and co-culture)
   protemic/            Targeted proteomics analyses (11-protein panel)
-  qPCR/                qPCR for BZLF1 and inflammatory genes
+  qPCR/                qPCR figures; raw Ct calculation code is not archived
 sequencing/
   rna/                 Bulk transcriptomics pipeline (setup, data, figures, enrichment,
                        immune deconvolution, hub genes, machine learning, WGCNA,
                        pathways, survival)
   machine-learning/    Classification and gene-immune correlation analyses
-  single-cell/         NPC43 single-cell analysis
+  single-cell/         NPC43 analysis; downstream state-marker, enrichment, pseudotime, and LIANA code is in downstream_v3/
+  figure_redraw/       Figure-only scripts and saved source data; see its audit for missing analyses
   survival analysis/   Survival analyses in GSE102349
 ```
 
 ## Running the pipelines
 
-- **Bulk RNA (sequencing/rna):** modules in `R/` are run in order `00_setup.R` → `01_data.R` → `02_figures.R` → `03_enrichment.R` → `04_immune.R` → `05_hub_genes.R` → `06_machine_learning.R` → `07_wgcna.R` → `08_pathways.R` → `09_survival.R`; `run_analysis.R` is the top-level driver.
+From the repository root, all scripts locate the project root themselves (via the `--file=` argument or `RNA_PROJECT_DIR`).
+
+- **Bulk RNA (sequencing/rna):** run the full pipeline from that directory:
+  ```bash
+  cd sequencing/rna
+  RNA_INPUT_DIR=/path/to/inputs Rscript run_full_pipeline.R
+  ```
+  `run_analysis.R` runs selected modules (`--modules=data,figures,enrichment`); `run_sensitivity_analysis.R` (needs `RNA_SERIES_MATRIX` or the file inside the input dir) and `run_ppi_analysis.R` run the extra analyses; `tests/validate_output.R` checks outputs. Modules in `R/` run in order `00_setup.R` → `01_data.R` → ... → `09_survival.R`, plus `10_sensitivity.R` and `11_ppi.R`.
+- **Input data:** GEO raw/normalized files live outside this repository. Set `RNA_INPUT_DIR` (required; a local `data/inputs/` inside the repo is the fallback and an error is raised if missing), `RNA_OUTPUT_DIR` (default `<repo>/output`), and optionally `RNA_EXTERNAL_LIBRARY`.
 - **Machine learning (sequencing/machine-learning):** `run_ml_analysis.py` (also available as `EBV_ML.ipynb`).
 - **Single-cell (sequencing/single-cell):** `run_single_cell_jupyterhub_fixed.py` (also available as `sc_umap_fixed_vscode (1).ipynb`).
 - **Experiments (experiments/):** `barplot_cytokines.R` / `heatmap_cytokines.R` (cytokines), `analyze_new_cytokines.R` (co-culture panel), `protemic_graph.py` (proteomics), `final_qpcr.r` (qPCR).

@@ -53,6 +53,27 @@ get_env_path <- function(name) {
 make_config <- function(project_dir) {
   project_dir <- normalizePath(project_dir, mustWork = TRUE)
   output_dir <- Sys.getenv("RNA_OUTPUT_DIR", file.path(project_dir, "output"))
+  default_input_dir <- file.path(project_dir, "data", "inputs")
+  input_dir <- Sys.getenv("RNA_INPUT_DIR", default_input_dir)
+  if (!dir.exists(input_dir)) {
+    warning(
+      "RNA_INPUT_DIR is not set and the default '", input_dir,
+      "' does not exist; set RNA_INPUT_DIR to the external input-data ",
+      "directory (see README).",
+      call. = FALSE
+    )
+  }
+  rcc_tar_file <- Sys.getenv(
+    "RNA_RCC_TAR_FILE",
+    file.path(input_dir, "GSE224450_RAW.tar")
+  )
+  external_library <- Sys.getenv("RNA_EXTERNAL_LIBRARY", unset = "")
+  cibersort_permutations <- suppressWarnings(as.integer(
+    Sys.getenv("RNA_CIBERSORT_PERM", unset = "1000")
+  ))
+  if (!is.finite(cibersort_permutations) || cibersort_permutations < 0) {
+    cibersort_permutations <- 1000L
+  }
 
   list(
     project_dir = project_dir,
@@ -60,7 +81,14 @@ make_config <- function(project_dir) {
     tables_dir = make_dir(file.path(output_dir, "tables")),
     figures_dir = make_dir(file.path(output_dir, "figures")),
     cache_dir = make_dir(file.path(output_dir, "cache")),
-    counts_file = get_env_path("RNA_COUNTS_FILE"),
+    input_dir = normalizePath(input_dir, mustWork = FALSE),
+    rcc_tar_file = normalizePath(rcc_tar_file, mustWork = FALSE),
+    external_library = if (nzchar(external_library)) {
+      normalizePath(external_library, mustWork = FALSE)
+    } else {
+      ""
+    },
+    cibersort_permutations = cibersort_permutations,
     cibersort_file = get_env_path("RNA_CIBERSORT_FILE"),
     survival_phenotype_file = get_env_path("RNA_SURVIVAL_PHENOTYPE_FILE"),
     survival_expression_file = get_env_path("RNA_SURVIVAL_EXPRESSION_FILE"),
